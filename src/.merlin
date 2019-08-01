@@ -1,0 +1,13 @@
+EXCLUDE_QUERY_DIR
+B /Users/ryan/.opam/4.08.0+flambda/lib/llvm
+B /Users/ryan/.opam/4.08.0+flambda/lib/num
+B /Users/ryan/.opam/4.08.0+flambda/lib/ocaml
+B /Users/ryan/.opam/4.08.0+flambda/lib/ocamlgraph
+B ../_build/default/src/.ocaml_of_llvm.eobjs/byte
+S /Users/ryan/.opam/4.08.0+flambda/lib/llvm
+S /Users/ryan/.opam/4.08.0+flambda/lib/num
+S /Users/ryan/.opam/4.08.0+flambda/lib/ocaml
+S /Users/ryan/.opam/4.08.0+flambda/lib/ocamlgraph
+S .
+FLG -ppx '/Users/ryan/Desktop/ocaml_of_llvm/_build/default/.ppx/6f113e64440c8d84c80a5a0f441fde66/ppx.exe --as-ppx'
+FLG -w @a-4-29-40-41-42-44-45-48-58-59-60-40 -strict-sequence -strict-formats -short-paths -keep-locs -w -23 -warn-error -27
