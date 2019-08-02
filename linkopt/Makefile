@@ -12,6 +12,9 @@ clean:
 	touch build/_.bc build/_.ll
 	rm -Rf build/*.bc build/*.ll
 
+# We use le32-unknown-nacl because otherwise clang generates some ABI-specific code,
+# such as a lowered va_list implementation. We don't really handle any real "ABI" beyond
+# little-endian memory.
 MYFLAGS:=-emit-llvm -target le32-unknown-nacl -Oz -nostdlibinc -isystem pdclib/include -isystem pdclib_platform/include
 
 build/xed-ex1.bc: xed/examples/xed-ex1.c
