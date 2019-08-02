@@ -80,34 +80,6 @@ let phinode_argvalues ~src ~dst =
     | _ -> acc
   ) [] dst |> List.rev
 
-(* let constexpr_pointer_off lli off : string =
-  match classify_value lli with
-  | GlobalVariable -> "`Pointer (" ^ my_global_name lli ^ ", " ^ off ^ ")"
-  | ConstantExpr when constexpr_opcode lli = GetElementPtr ->
-    let base = operand lli 0 in
-    let ty = type_of base in
-    let orig_off = off in
-    let off = operand lli 1 in
-    (* DRY this out with the above, and below for getelementpointer instruction.
-     * Maybe, for values, instead of throwing around strings all the time we could
-     * throw around something like "`Int of int | `Pointer of ? | `Poly of string" ?
-     * so we can blend static constants with dynamic strings. *)
-    (match classify_type ty with
-      | Pointer ->
-        let pointer_slots = type_slots @@ element_type ty in
-        let ptr_off =
-          match constexpr_as_int off with
-          | Ok 0 -> ""
-          | Ok x -> string_of_int (x * pointer_slots) ^ " + "
-          | Error x -> x ^ "*" ^ string_of_int pointer_slots ^ " + "
-        in
-        let elt_off = getelement constexpr_as_int (element_type ty) @@ List.init (num_operands lli - 2) (fun i -> operand lli (i+2)) in
-        constexpr_pointer_off base (orig_off^" + "^ptr_off^elt_off)
-      | _ -> assert false
-    )
-  | _ -> "(match " ^ constexpr lli ^ " with `Pointer (t, i) -> `Pointer (t, i + "^off^"))" *)
-
-
 let get_element_ptr read inst =
   let get_op i =
     let t = operand inst i
@@ -166,7 +138,7 @@ let rec read_llvalue (helper : llvalue_helper) llv =
       | _ -> Value.encode_value src @@ read_llvalue helper x |> Value.decode_value dst
       end
     | GetElementPtr -> get_element_ptr (read_llvalue helper) llv
-    (* TODO: These two are just wrong. *)
+    (* TODO: These two are just wrong. <- wait why? *)
     | PtrToInt ->
       let width = integer_bitwidth @@ type_of llv in
       Value.Source (Value.Private.int_modcall width "of_int" ^ "@@ R.ptrtoint " ^ parens (Value.to_source (type_of @@ operand llv 0) @@ read_llvalue helper @@ operand llv 0))
@@ -419,7 +391,7 @@ let instruction inst : string = try
           (parens @@ get_op_s 0)
           pat
           var
-          ("va_arg type mismatch; expected " ^ pat ^ " got ")
+          ("expected " ^ pat ^ " got ")
     )
   | PHI -> "()" (* phi nodes are set in args. *)
   | Unreachable -> "assert false"
@@ -538,6 +510,28 @@ end
 
 module FuncDominator = Graph.Dominator.Make (FunctionGraph)
 
+(* If this is true, we can skip generating the function pointer for llf. *)
+let only_function_call_usage llf =
+  fold_left_uses (fun acc use ->
+    if not acc then false else
+    let inst = user use in
+    match classify_value inst with
+    | Instruction Call ->
+      let x = operand inst (num_operands inst - 1) in
+      begin match classify_value x with
+      | Function ->
+        let func_name = value_name llf in
+        if value_name x <> func_name then false else
+        let status = ref true in
+        for i = 0 to num_operands inst - 2 do
+          if value_name (operand inst i) = func_name then status := false
+        done;
+        !status
+      | _ -> false
+      end
+    | _ -> false
+  ) true llf
+
 (** Call graph, including global variables. *)
 module UsageGraph = struct
   type t = {
@@ -613,6 +607,8 @@ module UsageGraph = struct
   let iter_vertex f g = StringMap.iter (fun k _ -> f k) g.index
   let iter_succ f g v = StringMap.fold (fun k () _ -> f k) (StringMap.find v g.succ) ()
   let nb_vertex g = StringMap.cardinal g.index
+
+  let self_loop g v = match StringMap.find_opt v (StringMap.find v g.pred) with Some () -> true | None -> false
 end
 
 module UseComponents = Graph.Components.Make (UsageGraph)
@@ -701,20 +697,20 @@ let process_module : 'a . module_data -> init:'a -> f:('a -> string -> 'a) -> 'a
       gen_block init "  " @@ FunctionGraph.entry fg
     in
     let init = f init ("  in " ^ my_block_name (entry_block fn) ^ " ()") in
-    (* TODO: only register polyfunc for functions whose address is taken. *)
-    f init ("and " ^ my_function_pointer_name fn ^ " = lazy (R.funptr_register \""^my_function_name fn^"\" (" ^ Value.make_polyfunc fn_ty (my_function_name fn) ^ "))")
+    if only_function_call_usage fn then init else
+    f init ("and " ^ my_function_pointer_name fn ^ " = lazy (R.funptr_register \""^my_function_name fn^"\" " ^ parens (Value.make_polyfunc fn_ty @@ my_function_name fn) ^ ")")
   and handle_globalvar letand f init globl = try
     (* is_global_constant
     is_thread_local/thread_local_mode
     is_externally_initialized *)
     let llv = global_initializer globl in
-    let bits = Value.encode_value_s (type_of llv) (read_llvalue (object
+    let bytes = Value.encode_value_s_bytes (type_of llv) (read_llvalue (object
       inherit llvalue_helper
       method! global_variable llv = Value.Source (my_global_name llv)
       method! function_value llv = Value.Source ("Lazy.force " ^ my_function_pointer_name llv)
       method! private unhandled llv = failwith ("unsupported value kind " ^ string_of_valuekind (classify_value llv) ^ " in global " ^ value_name globl)
     end) llv) in
-    f init (letand ^ my_global_name globl ^ " = R.alloc_bits " ^ string_of_int (Sizeof.sizeof @@ type_of llv) ^ " @@ " ^ bits)
+    f init (letand ^ my_global_name globl ^ " = R.alloc_bytes @@ " ^ bytes)
   with e -> (Printf.eprintf "%s\n" @@ string_of_llvalue globl; reraise e)
   in
 
@@ -735,6 +731,15 @@ let process_module : 'a . module_data -> init:'a -> f:('a -> string -> 'a) -> 'a
     let vllv = UsageGraph.get_llvalue usage_graph in
     match globals with
     | [] -> init
+    | [hd] ->
+      let llv = vllv hd in
+      let can_skip_rec =
+        not (UsageGraph.self_loop usage_graph hd) &&
+        match classify_value llv with
+        | Function -> only_function_call_usage llv
+        | _ -> true
+      in
+      handle (if can_skip_rec then "let " else "let rec ") f init llv
     | hd::tl ->
       let init = handle "let rec " f init (vllv hd) in
       List.fold_left (fun init x -> handle "and " f init (vllv x)) init tl

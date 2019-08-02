@@ -116,9 +116,9 @@ type bitsvalue =
 
 let bits_source = function SourceBits s -> s | ConstBits bi ->
   match Big_int.num_bits_big_int bi with
-  | 0 -> "Big_int.zero_big_int"
-  | x when x < 30 -> "Big_int.big_int_of_int " ^ parens (BigInt.to_string bi)
-  | _ -> Printf.sprintf "Big_int.big_int_of_string %S" @@ BigInt.to_string bi
+  | 0 -> "BigInt.zero"
+  | x when x < 30 -> "BigInt.of_int " ^ parens (BigInt.to_string bi)
+  | _ -> Printf.sprintf "BigInt.of_string %S" @@ BigInt.to_string' bi
 
 let void_source _ = "()"
 
@@ -271,9 +271,7 @@ let to_polysource (llty, value) =
 
 let make_polyfunc llty funcname =
   assert (classify_type llty = Function);
-  let params, args =
-    if is_var_arg llty then ["varargs"], ["varargs"] else ["[]"], []
-  in
+  let params, args = [], [] in
   let types = param_types llty in
   let _, params, args =
     Array.fold_right (fun ty (i, params, args) ->
@@ -282,10 +280,14 @@ let make_polyfunc llty funcname =
     ) types (Array.length types - 1, params, args)
   in
   let args = match args with [] -> ["()"] | x -> x in
-  "function (" ^ String.concat "::" params ^ ": R.polyval list) -> ("
-  ^ to_polysource (return_type llty, Source (parens funcname ^ " " ^ String.concat " " args))
-  ^ " : R.polyval) | _ -> assert false"
-
+  if is_var_arg llty then
+    "(function " ^ String.concat "::" params ^ "::varargs -> "
+    ^ to_polysource (return_type llty, Source (parens funcname ^ " " ^ String.concat " " args ^ " varargs"))
+    ^ " | _ -> assert false : R.polyfunc)"
+  else
+    "(function [" ^ String.concat "; " params ^ "] -> "
+    ^ to_polysource (return_type llty, Source (parens funcname ^ " " ^ String.concat " " args))
+    ^ " | _ -> assert false : R.polyfunc)"
 
 (* Try to return a compile-time int for the value, otherwise return
  * a source string that will result in a runtime int.
@@ -422,6 +424,14 @@ let rec encode_value llty = function
     end
 and encode_value_s llty bits =
   encode_value llty bits |> bits_source
+and encode_value_s_bytes llty bits =
+  let sz = Sizeof.sizeof llty in
+  match encode_value llty bits with
+  | SourceBits s -> "R.bytes_of_bits " ^ string_of_int sz ^ " " ^ parens s
+  | ConstBits bi ->
+    if BigInt.(equal zero) bi
+    then "Bytes.make "^string_of_int sz^" '\\000'"
+    else Printf.sprintf "Bytes.of_string %S" @@ Bytes.unsafe_to_string @@ Runtime.bytes_of_bits sz bi
 
 (* decode value from bits. *)
 let rec decode_value_s llty bits =

@@ -15,23 +15,6 @@ and polyfunc = polyval list -> polyval
 (* this *must* match what you're trying to compile. *)
 let pointer_size = 4
 
-(* type rtt = [
-  | `Void
-  | `Half
-  | `Float
-  | `Double
-  | `X86fp80
-  | `Fp128
-  | `Ppc_fp128
-  | `Int of int
-  | `Function of rtt list * rtt
-  | `Struct of rtt list
-  | `Array of int * rtt
-  | `Vector of int * rtt
-  | `Pointer of rtt
-  | `VAList
-] *)
-
 let rec show_polyval : polyval -> string = function
   | `Int bi -> BigInt.to_string bi
   | `Float x -> Float.to_string x
@@ -322,6 +305,7 @@ end
 
 
 let encode_float (ebits, sbits) x =
+  (* let sign = Float.sign_bit x in *)
   match Float.classify_float x with
   | FP_zero ->
     let sign = Float.compare (Float.copy_sign 1. x) 0. < 0 in
@@ -379,7 +363,7 @@ let decode_float (ebits, sbits) x =
     else
       Float.ldexp (tofloat @@ BigInt.(lor) frac @@ BigInt.power_int 2 (sbits-1)) (exp - bias)
   in
-  if BigInt.(equal zero) sign then t else Float.copy_sign t (-1.)
+  if BigInt.(equal zero) sign then t else Float.neg t
 
 let decode_float_x87 x =
   (* just ignore the implicit bit. *)
@@ -423,7 +407,7 @@ let compare_pointer a b =
     | DataPointer {id; bytes=_; off} -> id + off
     | FuncPointer {id; func=_} -> id
   in
-  Int.compare (get_id a) (get_id b)
+  compare (get_id a) (get_id b)
 
 let pointer_offset ptr offset =
   match ptr with
@@ -434,7 +418,10 @@ let pointer_offset ptr offset =
 (* Pointer to int and back isn't perfect in a variety of
  * ways, but, should work for now. *)
 
-module IntMap = Map.Make(Int)
+module IntMap = Map.Make(struct
+  type t = int
+  let compare = (compare : int -> int -> int)
+end)
 let inttoptr_table : pointer IntMap.t ref = ref IntMap.empty
 
 let ptrtoint = function
@@ -504,8 +491,11 @@ let store_bits ptr nbytes bits =
     Printf.eprintf "error storing %d bytes from %s\n%!" nbytes @@ show_polyval (`Pointer ptr);
     raise e
 
+let bytes_of_bits nbytes bits =
+  Bytes.init nbytes (fun i -> BigInt.extract ~low:(i*8) ~len:8 bits |> BigInt.to_int_exn |> char_of_int)
+
 let alloc_bits nbytes bits =
-  alloc_bytes @@ Bytes.init nbytes (fun i -> BigInt.extract ~low:(i*8) ~len:8 bits |> BigInt.to_int_exn |> char_of_int)
+  alloc_bytes @@ bytes_of_bits nbytes bits
 
 let encode_pointer ptr =
   BigInt.unsigned 32 @@ BigInt.of_int @@ ptrtoint ptr
@@ -540,21 +530,6 @@ let va_copy dst src =
 let chararray_to_string arr off len =
   String.init len (fun i -> match arr.(off+i) with `Int c -> Int64.to_int c land 0xff |> char_of_int | _ -> failwith "Bad type in chararray_to_string")
 
-(* let cstring_to_string = function
-  | `Pointer (arr, off) ->
-    let rec f i =
-      if i >= Array.length arr then None
-      else match arr.(i) with
-      | `Int x when Int64.logand x 0xFFL = 0L -> Some i
-      | `Int _ -> f (i+1)
-      | _ -> failwith "Bad type for cstring"
-    in
-    begin match f off with
-    | None -> failwith "cstring is not null terminated!"
-    | Some endoff -> chararray_to_string arr off (endoff-off)
-    end
-  | _ -> failwith "Bad type for cstring" *)
-
 let cstring_to_string = function
   | DataPointer {id=_; bytes; off} ->
     let rec f i =
@@ -578,28 +553,6 @@ let cstring_of_string s =
     | Some i -> i + 1
   in
   Bytes.init len (fun i -> try s.[i] with Invalid_argument _ -> '\x00')
-
-(* let rec show (any : any) = match any with
-  | `Int x -> Int64.to_string x
-  | `Aggregate arr -> "[" ^ String.concat "; " (Array.to_list @@ Array.map show arr) ^ "]"
-  | `Pointer (arr, i) ->
-      let len = Array.length arr in
-      if i >= len then
-        if any == null_pointer then "NULL" else "*end"
-      else
-        let portion, hasmore = if len-i <= 8
-          then Array.sub arr i (len-i), false
-          else Array.sub arr i 7, true
-        in
-        let char_arr = Array.for_all (function `Int c -> let c = Int64.to_int c in 32 <= c && c < 127 | _ -> false) portion in
-        if char_arr
-          then Printf.sprintf "*%S%s" (chararray_to_string portion 0 @@ Array.length portion) (if hasmore then "..." else "")
-          else portion |> Array.map show |> Array.to_list |> String.concat "; " |> (fun s -> "*[" ^ s ^ (if hasmore then "; ...]" else "]"))
-  | `Uninit -> "uninit"
-  | `Undef -> "undef"
-  | `Void -> "void"
-  | `Function _ -> "function"
-  | `VAList _ -> "va_list" *)
 
 (* TODO: we need runtime type information about dst and src to properly set them; this here is wrong when pointer-casting has happened. *)
 let llvm_memmove dst dstw src srcw len _isvol =

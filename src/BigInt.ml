@@ -29,6 +29,7 @@ let (+) = add_big_int
 let (-) = sub_big_int
 let ( * ) = mult_big_int
 let ( / ) = div_big_int
+let neg = minus_big_int
 let pred = pred_big_int
 let succ = succ_big_int
 let extract ?(low=0) ~len bi = extract_big_int bi low len
@@ -70,3 +71,22 @@ let of_bytes src src_off len =
     let t = shift_left (of_int @@ int_of_char @@ Bytes.get src (src_off+i)) (i*8) in
     f (x lor t) i
   in f zero 0
+
+let _15 = of_int 15
+
+let rec to_string' bi =
+  let (+), (-), ( * ), (/) = Stdlib.((+), (-), ( * ), (/)) in
+  let bytes = (num_bits_big_int bi + 7) / 8 in
+  if bytes <= 2 then to_string bi else
+  if sign_big_int bi = -1 then "-" ^ to_string' (neg bi) else
+  let nibbles = 2*bytes in
+  String.init (2+nibbles) (function
+    | 0 -> '0'
+    | 1 -> 'x'
+    | i ->
+      let nibble = nibbles - 1 - (i - 2) in
+      match int_of_big_int (shift_right bi (4*nibble) land _15) with
+      | 0 -> '0' | 1 -> '1' | 2 -> '2' | 3 -> '3' | 4 -> '4' | 5 -> '5' | 6 -> '6' | 7 -> '7'
+      | 8 -> '8' | 9 -> '9' | 10 -> 'a' | 11 -> 'b' | 12 -> 'c' | 13 -> 'd' | 14 -> 'e' | 15 -> 'f'
+      | _ -> assert false
+  )
