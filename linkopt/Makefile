@@ -2,6 +2,8 @@ LLVM_CONFIG?=llvm-config-mp-8.0
 
 export PATH:=$(shell $(LLVM_CONFIG) --bindir):$(PATH)
 
+_:=$(shell test -d build || ./build.sh)
+
 .PHONY: all clean
 
 all: build/combined.bc

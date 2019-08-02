@@ -63,7 +63,7 @@ let has_any_users lli = match use_begin lli with Some _ -> true | None -> false
 let phinode_argparams llb =
   match fold_left_instrs (fun acc lli ->
     match instr_opcode lli with
-    | PHI -> ("~" ^ my_instr_name lli) :: acc
+    | PHI -> ("~(" ^ my_instr_name lli ^ ":" ^ Value.typename_for (type_of lli) ^ ")") :: acc
     | _ -> acc
   ) [] llb
   with
