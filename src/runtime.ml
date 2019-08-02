@@ -617,15 +617,16 @@ let llvm_objectsize obj _obj_ty min nullunk dyn =
   if obj == null_pointer then (if nullunk then unkval else 0L) else
   unkval (* Dummy always-unknown implementation *)
 
-let start_main f =
+let start_main f exit =
   let len = Array.length Sys.argv in
   let argv = alloc (pointer_size * (len+1)) in
   for i = 0 to (len-1) do
     store_bits (pointer_offset argv (i*pointer_size)) pointer_size @@ encode_pointer @@ alloc_bytes @@ cstring_of_string Sys.argv.(i)
   done;
   store_bits (pointer_offset argv (len*pointer_size)) pointer_size @@ encode_pointer null_pointer;
-  f (Int64.of_int len) argv
-  |> Int64.to_int
+  f (Int64.of_int len) argv |> exit
+
+let exit = exit
 
 (** Run the given ctors array. *)
 let run_ctors ctors len =

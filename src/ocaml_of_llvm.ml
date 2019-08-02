@@ -116,7 +116,7 @@ let get_element_ptr read inst =
   let ty, base = get_op 0 in
   assert (classify_type ty = Pointer);
   let off = Value.scale (Value.to_signed_int @@ get_op 1) (Sizeof.sizeof @@ element_type ty) in
-  let off = Value.getelementoff Sizeof.sizeof [off] (element_type ty) @@ List.init (num_operands inst - 2) (fun i -> get_op (i+2)) in
+  let off = Value.getelementoff [off] (element_type ty) @@ List.init (num_operands inst - 2) (fun i -> get_op (i+2)) in
   let off = Value.sum off |> Value.int_source in
   Value.Source ("R.pointer_offset "^parens (Value.to_source ty base)^" "^parens off)
 
@@ -389,7 +389,7 @@ let instruction inst : string = try
     end
   | GetElementPtr ->
     set_local @@ get_element_ptr read inst
-  | ExtractValue ->
+  (* | ExtractValue ->
     let agg = operand inst 0 in
     let elt_off = Value.getelementoff (fun _ -> 1) [] (type_of agg) @@ List.init (num_operands inst - 1) (fun i -> get_op (i+1)) in
     let elt_off = Value.sum elt_off |> Value.int_source in
@@ -399,7 +399,7 @@ let instruction inst : string = try
     let eltty, elt = get_op 1 in
     let elt_off = Value.getelementoff (fun _ -> 1) [] (type_of agg) @@ List.init (num_operands inst - 2) (fun i -> get_op (i+2)) in
     let elt_off = Value.sum elt_off |> Value.int_source in
-    set_local_s (read_s agg ^ ".("^elt_off^") <- " ^ (Value.to_source eltty elt))
+    set_local_s (read_s agg ^ ".("^elt_off^") <- " ^ (Value.to_source eltty elt)) *)
 
   | ExtractElement -> set_local (Value.vec_extract (get_op 0) (get_op 1))
   | InsertElement -> set_local (Value.vec_insert (get_op 0) (get_op 1) (get_op 2))
@@ -466,10 +466,10 @@ let make_missing_extern llv =
   | Function ->
     let let_fun = "let "^my_function_name llv^" " in
     begin match name with
+    | "close" -> Some (let_fun ^ "_fd = (*TODO*) -1L")
+    | "write" -> Some (let_fun ^ "_fd buf count = match buf with R.DataPointer {bytes;off;_} -> print_string (Bytes.sub_string bytes off @@ Int64.to_int count); count | _ -> assert false")
     | "abort" -> Some (let_fun ^ "() : unit = raise "^runtime_module^".Abort")
-    | "exit" -> Some (let_fun ^ "x : unit = exit @@ "^Value.to_signed_int_s (paramty 0, Value.Source "x"))
-    | "puts" -> Some (let_fun ^ "ptr = "^runtime_module^".cstring_to_string ptr |> print_endline; 1L")
-    | "putchar" -> Some (let_fun ^ "c = print_char (Int64.to_int c land 0xff |> char_of_int); c")
+    | "_exit" -> Some (let_fun ^ "x : unit = R.exit @@ "^Value.to_signed_int_s (paramty 0, Value.Source "x"))
     | "magic_printf" -> Some (let_fun ^ "fmt args = print_endline (\"printf(\" ^ String.concat \", \" (Printf.sprintf \"%S\" ("^runtime_module^".cstring_to_string fmt) :: List.map "^runtime_module^".show_polyval args) ^ \")\"); 10L")
     | "malloc" -> Some (let_fun ^ "x = R.alloc (Int64.to_int x)")
     | "free" -> Some (let_fun ^ " = R.dealloc")
@@ -477,9 +477,9 @@ let make_missing_extern llv =
     end
   | GlobalVariable ->
     let let_eq = "let "^my_global_name llv^" = " in
+    let llty = element_type @@ type_of llv in
     begin match name with
-    | "stdout" | "__stdoutp" -> Some (let_eq ^ "[|`Pointer ([||], 1)|]")
-    | "stderr" | "__stderrp" -> Some (let_eq ^ "[|`Pointer ([||], 2)|]")
+    | "errno" -> Some (let_eq ^ " R.alloc_bits " ^ Value.encode_value_s llty (Value.zero_value llty))
     | _ -> None
     end
   | _ -> None
@@ -779,11 +779,10 @@ let main argv =
   ifglobal "llvm.global_ctors"
     (fun llv -> print_endline ("  "^runtime_module^".run_ctors "^my_global_name llv^" "^sgarrlen llv^";"));
   ifglobal "main"
-    (fun llv -> print_endline ("  let status = "^runtime_module^".start_main "^my_function_name llv^" in"))
-    ~default:(fun () -> print_endline ("  let status = 0 in"));
+    (fun llv -> print_endline ("  let () = "^runtime_module^".start_main "^my_function_name llv^" f_exit in"));
   ifglobal "llvm.global_dtors"
     (fun llv -> print_endline ("  "^runtime_module^".run_dtors "^my_global_name llv^" "^sgarrlen llv^";"));
-  print_endline ("  exit status");
+  print_endline ("  R.exit 0");
 
   print_endline "end";
   print_endline "let () = T.run ()";

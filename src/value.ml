@@ -393,24 +393,22 @@ let rec encode_value llty = function
       | tk -> (failwith "Unsupported encode type "^string_of_typekind tk)
     )
   | List l ->
-    let bitses = match classify_type llty with
+    let layout = match classify_type llty with
       | Struct ->
-        let eltys = struct_element_types llty in
-        let alignof = if is_packed llty then (fun _ -> 1) else Sizeof.alignof in
-        List.mapi (fun i x -> 8 * Sizeof.sizeof eltys.(i), 8 * alignof eltys.(i), encode_value eltys.(i) x) l
+        let layout = Sizeof.struct_layout llty in
+        List.mapi (fun i x -> fst layout.(i), encode_value (snd layout.(i)) x) l
       | Array | Vector ->
         let elty = element_type llty in
-        let bitsz = 8 * Sizeof.sizeof elty in
-        List.map (fun x -> bitsz, 8, encode_value elty x) l
+        let sz = Sizeof.sizeof elty in
+        List.mapi (fun i x -> sz*i, encode_value elty x) l
       | _ -> assert false
     in
-    let _off, const, source = List.fold_left (fun (off, const, source) (sz, align, x) ->
-        let off = if off mod align = 0 then off else off + align - (off mod align) in
-        match shift_left x off with
-        | ConstBits bi -> 
-          off+sz, BigInt.(lor) const bi, source
-        | SourceBits s -> off+sz, const, s::source
-      ) (0, BigInt.zero, []) bitses
+    let const, source = List.fold_left (fun (const, source) (off, x) ->
+        match shift_left x (8*off) with
+        | ConstBits bi ->
+          BigInt.(lor) const bi, source
+        | SourceBits s -> const, s::source
+      ) (BigInt.zero, []) layout
     in
     begin match const, source with
     | bi, [] -> ConstBits bi
@@ -768,24 +766,21 @@ let sum ints =
   | 0, source -> SourceInt ("(" ^ String.concat "+" source ^ ")")
   | const, source -> SourceInt ("(" ^ String.concat "+" (string_of_int const :: source) ^ ")")
 
-let rec getelementoff sizefunc acc llty = function [] -> acc | hd::tl ->
+let rec getelementoff acc llty = function [] -> acc | hd::tl ->
   let idx = to_signed_int hd in
   match classify_type llty with
   | Void | Integer | Pointer | Half | Float | Double | X86fp80 | Fp128 | Ppc_fp128 | X86_mmx -> failwith "Can't get element of scalar"
   | Label | Function | Metadata | Token -> failwith "nonphysical type"
   | Struct ->
-    let types = struct_element_types llty in
     let idx = match idx with
       | ConstInt x -> x
       | _ -> failwith "struct element index must be constant int"
     in
-    if idx < 0 || idx >= Array.length types then failwith "struct element index out of bounds!";
-    let sum = ref 0 in
-    for i = 0 to (idx - 1) do
-      sum := !sum + sizefunc types.(i)
-    done;
-    getelementoff sizefunc (ConstInt (!sum) :: acc) types.(idx) tl
+    let off, ty =
+      try (Sizeof.struct_layout llty).(idx)
+      with Invalid_argument _ -> failwith "struct element index out of bounds!"
+    in
+    getelementoff (ConstInt off :: acc) ty tl
   | Array | Vector  ->
     let elty = element_type llty in
-    let size = sizefunc elty in
-    getelementoff sizefunc (scale idx size :: acc) elty tl
+    getelementoff (scale idx (Sizeof.sizeof elty) :: acc) elty tl

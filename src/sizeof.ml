@@ -74,5 +74,5 @@ let struct_layout llty : (int * lltype) array =
     out.(i) <- !off, ty;
     off := !off + sizeof ty
   done;
-  assert (sizeof llty = pad llty !off);
+  assert (sizeof llty = !off + pad llty !off);
   out

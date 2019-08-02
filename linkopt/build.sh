@@ -1,6 +1,8 @@
 #!/bin/sh
 set -eux
 
+export PATH="`${LLVM_CONFIG:-llvm-config-mp-8.0} --bindir`:$PATH"
+
 clean () {
 	cd ./xed
 	./mfile.py clean
@@ -15,13 +17,23 @@ build () {
 	./mfile.py --host-cpu=ia32 --host-os=lin --extra-flags="-Oz -emit-llvm -target le32-unknown-nacl -nostdlibinc -isystem ../pdclib/include -isystem ../pdclib_platform/include"
 	cd ..
 	
-	rm -Rf libxed
-	mkdir libxed
-	cd libxed
-	ar x ../xed/obj/libxed.a
-	cd ..
+	rm -Rf build/libxed
+	mkdir -p build/libxed
+	cd build/libxed
+	ar x ../../xed/obj/libxed.a
+	cd ../..
 
-	
+	rm -Rf build/libc
+	mkdir -p build/libc
+	cd build/libc
+	rm -Rf ../../pdclib/functions/_dlmalloc
+	for file in \
+		../../pdclib/functions/*/*.c \
+		../../pdclib_platform/functions/*/*.c \
+	; do
+		clang -Oz -emit-llvm -target le32-unknown-nacl -nostdlibinc -isystem ../../pdclib/include -isystem ../../pdclib_platform/include $file -c -o "`basename "$file" .c`.o"
+	done
+	cd ../..
 }
 
 case "${1-}" in

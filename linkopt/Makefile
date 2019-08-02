@@ -7,8 +7,8 @@ export PATH:=$(shell $(LLVM_CONFIG) --bindir):$(PATH)
 all: build/combined.bc
 
 clean:
-	touch build/_
-	rm -Rf build/*
+	touch build/_.bc build/_.ll
+	rm -Rf build/*.bc build/*.ll
 
 MYFLAGS:=-emit-llvm -target le32-unknown-nacl -Oz -nostdlibinc -isystem pdclib/include -isystem pdclib_platform/include
 
@@ -24,5 +24,5 @@ build/%.bc: %.c
 build/%.bc: %.cpp
 	clang++ $(MYFLAGS) $^ -c -o $@
 
-build/combined.bc: $(wildcard libxed/*.o) build/libc.bc build/xed-ex1.bc build/xed-examples-util.bc build/printf.bc
+build/combined.bc: $(wildcard build/libxed/*.o) $(wildcard build/libc/*.o) build/xed-ex1.bc build/xed-examples-util.bc
 	llvm-link $^ | opt -name-anon-globals -instnamer -internalize -internalize-public-api-list=main -argpromotion -loweratomic -lowerinvoke -Oz -o $@
